@@ -1,0 +1,15 @@
+# Ignore the environment file containing sensitive credentials
+.env
+
+# Other common ignores (optional):
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Mac-specific files (optional):
+.DS_Store
+
+# Virtual environment (optional):
+venv/
+.env
