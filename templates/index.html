@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Set Spotify Playlists</title>
+</head>
+<body>
+    <h1>Set Playlists for Radio</h1>
+    <form id="playlistForm">
+        <label for="playlists">Enter Playlist URIs (comma separated):</label><br>
+        <textarea id="playlists" rows="4" cols="50" placeholder="spotify:playlist:xxx, spotify:playlist:yyy"></textarea><br><br>
+        <button type="button" onclick="submitPlaylists()">Submit Playlists</button>
+    </form>
+    <p id="status"></p>
+
+    <script>
+        function submitPlaylists() {
+            const playlistText = document.getElementById('playlists').value;
+            const playlistArray = playlistText.split(',').map(uri => uri.trim());
+
+            fetch('/set_playlists', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ playlists: playlistArray })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.message) {
+                    document.getElementById('status').innerText = "Playlists updated successfully!";
+                } else {
+                    document.getElementById('status').innerText = "Error: " + data.error;
+                }
+            })
+            .catch(error => {
+                document.getElementById('status').innerText = "Error: " + error;
+            });
+        }
+    </script>
+</body>
+</html>
