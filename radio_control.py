@@ -4,7 +4,7 @@ from spotipy.oauth2 import SpotifyOAuth
 from pynput import keyboard  # Use pynput for cross-platform keyboard controls
 import json  # For loading playlists from playlists.json
 from dotenv import load_dotenv
-import time  # For delay
+import time  # For retry delays
 
 # Load environment variables from .env file
 load_dotenv()
@@ -40,10 +40,15 @@ def load_playlists():
 # Authenticate and get Spotify client (automatically handles callback URL)
 def get_spotify_client():
     token_info = sp_oauth.get_cached_token()
-    
+
     if not token_info:
         # This will automatically open the browser, handle the callback, and return the token
         token_info = sp_oauth.get_access_token()
+    else:
+        # Refresh the token if it's expired
+        if sp_oauth.is_token_expired(token_info):
+            print("Token expired, refreshing...")
+            token_info = sp_oauth.refresh_access_token(token_info['refresh_token'])
     
     return spotipy.Spotify(auth=token_info['access_token'])
 
@@ -65,8 +70,17 @@ def play_channel(channel_index):
             sp.shuffle(True, device_id=device_id)  # Enable shuffle mode
             sp.start_playback(device_id=device_id, context_uri=playlist_uri)
             print(f"Playing (shuffled) playlist: {playlist_uri} on device: {device_id}")
-        except Exception as e:
-            print(f"Error starting playback: {e}")
+        except spotipy.SpotifyException as e:
+            if e.http_status == 403:
+                print("Received 403 error, retrying in 2 seconds...")
+                time.sleep(2)
+                try:
+                    sp.start_playback(device_id=device_id, context_uri=playlist_uri)
+                    print(f"Retry successful: Playing playlist: {playlist_uri} on device: {device_id}")
+                except Exception as e:
+                    print(f"Error during retry: {e}")
+            else:
+                print(f"Error starting playback: {e}")
     else:
         print("No active devices found or no playlists available!")
 
