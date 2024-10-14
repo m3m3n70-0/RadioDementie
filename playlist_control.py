@@ -16,8 +16,9 @@ SPOTIPY_REDIRECT_URI = os.getenv('SPOTIPY_REDIRECT_URI')
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # A secure random key for session management
 
-# Path to the JSON file where playlists are stored
+# Paths to JSON files
 PLAYLIST_FILE = 'playlists.json'
+COMMAND_FILE = 'command.json'
 
 # Spotify OAuth object using credentials from environment variables
 sp_oauth = SpotifyOAuth(client_id=SPOTIPY_CLIENT_ID,
@@ -37,24 +38,55 @@ def save_playlists(playlists):
     with open(PLAYLIST_FILE, 'w') as file:
         json.dump(playlists, file)
 
+# Load command from the JSON file if it exists
+def load_command():
+    if os.path.exists(COMMAND_FILE):
+        with open(COMMAND_FILE, 'r') as file:
+            data = json.load(file)
+            return data.get('command', None)
+    return None
+
+# Save command to the JSON file
+def save_command(command):
+    with open(COMMAND_FILE, 'w') as file:
+        json.dump({"command": command}, file)
+
+# Clear the command from the JSON file
+def clear_command():
+    with open(COMMAND_FILE, 'w') as file:
+        json.dump({}, file)
+
 # Global list to store radio channels (playlists)
 radio_channels = load_playlists()
 
 # Variable to store the custom command
 custom_command = None
 
+# Check if the user is logged in by checking session['token_info']
+def is_logged_in():
+    return 'token_info' in session
+
+# Refresh the session token if it's expired
+def refresh_token():
+    token_info = session.get('token_info')
+    if sp_oauth.is_token_expired(token_info):
+        print("Token expired, refreshing...")
+        token_info = sp_oauth.refresh_access_token(token_info['refresh_token'])
+        session['token_info'] = token_info
+    return token_info
+
 # Auto-redirect to login if not logged in
 @app.before_request
 def require_login():
     if request.endpoint in ['login', 'callback']:
         return
-    if 'token_info' not in session:
+    if not is_logged_in():
         print("User not logged in. Redirecting to Spotify login.")
         return redirect(url_for('login'))
 
 @app.route('/')
 def index():
-    if 'token_info' in session:
+    if is_logged_in():
         print("User already logged in. Redirecting to /playlists.")
         return redirect(url_for('playlists'))
     return render_template('login.html')
@@ -79,12 +111,11 @@ def callback():
 
 @app.route('/playlists')
 def playlists():
-    if 'token_info' not in session:
+    if not is_logged_in():
         print("Token info missing in session. Redirecting to login.")
         return redirect(url_for('index'))
 
-    token_info = session.get('token_info')
-    print("Token Info in session:", token_info)
+    token_info = refresh_token()
 
     sp = spotipy.Spotify(auth=token_info['access_token'])
 
@@ -117,11 +148,24 @@ def get_playlists():
 # Route for setting the custom command
 @app.route('/set_command', methods=['POST'])
 def set_command():
+    if not is_logged_in():
+        return redirect(url_for('login'))  # Redirect to login if not authenticated
+
     global custom_command
     data = request.form
     custom_command = data.get('command')  # Get the command from the input field
-    print(f"Custom command set to: {custom_command}")
+    save_command(custom_command)  # Save the command to JSON file
+    print(f"Send command: {custom_command}")  # Log when a command is set
     return jsonify({"message": "Command set successfully!"}), 200
+
+# Route for the radio to fetch the latest command from JSON
+@app.route('/get_command', methods=['GET'])
+def get_command():
+    global custom_command
+    custom_command = load_command()
+    if custom_command:
+        return jsonify({"command": custom_command}), 200
+    return jsonify({"message": "No command available"}), 404
 
 if __name__ == "__main__":
     app.run(debug=True, port=5001)

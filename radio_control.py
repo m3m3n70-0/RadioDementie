@@ -1,14 +1,14 @@
 import os
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
-from pynput import keyboard  # Use pynput for cross-platform keyboard controls
-import json  # For loading playlists from playlists.json
+from pynput import keyboard
+import json
 from dotenv import load_dotenv
-import time  # For retry delays
-import subprocess  # For running custom commands
-import pygame  # For playing the jingle
+import time
+import subprocess
+import pygame
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
 # Initialize pygame mixer for playing the jingle
@@ -23,6 +23,9 @@ SPOTIPY_REDIRECT_URI = os.getenv('SPOTIPY_REDIRECT_URI')
 scope = "user-library-read user-read-playback-state user-modify-playback-state playlist-read-private"
 sp_oauth = SpotifyOAuth(client_id=SPOTIPY_CLIENT_ID, client_secret=SPOTIPY_CLIENT_SECRET, redirect_uri=SPOTIPY_REDIRECT_URI, scope=scope)
 
+# Path to the JSON file where commands are stored
+COMMAND_FILE = 'command.json'
+
 # Path to the JSON file where playlists are stored
 PLAYLIST_FILE = 'playlists.json'
 
@@ -33,6 +36,7 @@ JINGLE_FILE = os.path.join('songs', 'Jingle.mp3')
 radio_channels = []  # List of Spotify playlist URIs
 current_channel = 0  # Current channel index
 custom_command = None  # Store the custom command
+song_about_to_end_triggered = False  # Prevent multiple triggers
 
 # Load playlists from the JSON file dynamically
 def load_playlists():
@@ -46,37 +50,52 @@ def load_playlists():
     
     return radio_channels
 
-# Authenticate and get Spotify client (automatically handles callback URL)
+# Load command from the JSON file dynamically
+def load_command():
+    global custom_command
+    if os.path.exists(COMMAND_FILE):
+        with open(COMMAND_FILE, 'r') as file:
+            try:
+                command_data = json.load(file)
+                custom_command = command_data.get('command', None)
+                print(f"Loaded command from file: {custom_command}")
+            except json.JSONDecodeError:
+                print(f"Error decoding JSON from {COMMAND_FILE}")
+                custom_command = None
+    else:
+        print(f"{COMMAND_FILE} not found.")
+        custom_command = None
+    
+    return custom_command
+
+# Authenticate and get Spotify client
 def get_spotify_client():
     token_info = sp_oauth.get_cached_token()
 
     if not token_info:
-        # This will automatically open the browser, handle the callback, and return the token
         token_info = sp_oauth.get_access_token()
     else:
-        # Refresh the token if it's expired
         if sp_oauth.is_token_expired(token_info):
             print("Token expired, refreshing...")
             token_info = sp_oauth.refresh_access_token(token_info['refresh_token'])
     
     return spotipy.Spotify(auth=token_info['access_token'])
 
-sp = get_spotify_client()  # Get the authenticated Spotify client
+sp = get_spotify_client()
 
 # Play the current channel (playlist)
 def play_channel(channel_index):
     global sp
     devices = sp.devices()  # Get available devices
     
-    # Load the updated playlists every time a channel is played
     radio_channels = load_playlists()
     
     if devices['devices'] and radio_channels:
-        device_id = devices['devices'][0]['id']  # Use the first available device
-        playlist_uri = radio_channels[channel_index]  # Get the playlist URI
+        device_id = devices['devices'][0]['id']
+        playlist_uri = radio_channels[channel_index]
 
         try:
-            sp.shuffle(True, device_id=device_id)  # Enable shuffle mode
+            sp.shuffle(True, device_id=device_id)
             sp.start_playback(device_id=device_id, context_uri=playlist_uri)
             print(f"Playing (shuffled) playlist: {playlist_uri} on device: {device_id}")
         except spotipy.SpotifyException as e:
@@ -95,18 +114,15 @@ def play_channel(channel_index):
 
 # Toggle play/pause for the current channel
 def play_pause():
-    global sp  # Make sure to declare this inside the function
+    global sp
     
-    # Fetch the current playback status
     playback = sp.current_playback()
-    print(f"Playback state: {playback}")  # Debugging line
+    print(f"Playback state: {playback}")
     
-    # If there's no playback (Spotify isn't playing anything)
     if playback is None or playback['item'] is None:
         print("No current playback. Starting the first playlist.")
-        play_channel(0)  # Start playing the first playlist (index 0)
+        play_channel(0)
     else:
-        # If Spotify is playing something, toggle play/pause
         if playback['is_playing']:
             sp.pause_playback()
             print("Playback paused.")
@@ -118,7 +134,6 @@ def play_pause():
 def zap_next_channel():
     global current_channel
     
-    # Reload playlists every time a channel is zapped
     radio_channels = load_playlists()
     
     if len(radio_channels) == 0:
@@ -132,8 +147,11 @@ def zap_next_channel():
 # Play the jingle, then execute the custom command, and finally resume the playlist
 def play_jingle_and_execute_command():
     global custom_command
-    if custom_command:
+    command = load_command()  # Fetch the latest command from the file
+    if command:
         try:
+            print(f"Received custom command: {command}")
+
             # Stop current Spotify playback before playing the jingle
             print("Pausing Spotify playback for jingle.")
             sp.pause_playback()
@@ -149,9 +167,16 @@ def play_jingle_and_execute_command():
                     time.sleep(1)
                 print("Jingle finished.")
 
+                # Display the command on the radio after the jingle
+                display_on_radio(f"Executing command: {command}")
+
                 # Execute the custom command after the jingle
-                print(f"Executing custom command: {custom_command}")
-                subprocess.run(custom_command, shell=True)
+                subprocess.run(command, shell=True)
+
+                # Clear the command from the JSON file after executing
+                with open(COMMAND_FILE, 'w') as file:
+                    json.dump({}, file)
+                print("Cleared command after execution.")
 
                 # Resume Spotify playback after the command
                 print("Resuming Spotify playback.")
@@ -163,50 +188,72 @@ def play_jingle_and_execute_command():
         finally:
             custom_command = None  # Clear the command after execution
 
-# Monitor Spotify playback and execute the command when the song ends
+# Fetch and display command, then pause playback for 5 seconds
+def fetch_and_display_command():
+    global custom_command
+    command = load_command()
+    
+    if command:
+        playback = sp.current_playback()
+        if playback and playback['is_playing']:
+            progress_ms = playback['progress_ms']
+            print(f"Command to be shown: {command} | Song progress: {progress_ms} ms")
+
+        # Display the command on the radio
+        display_on_radio(f"Command: {command}")
+
+# Monitor Spotify playback and fetch/display the command 1 second before the song ends
 def monitor_playback():
     global sp
+    global song_about_to_end_triggered
     while True:
         try:
             playback = sp.current_playback()
+            
             if playback is not None and playback['is_playing']:
                 progress = playback['progress_ms']
                 total_duration = playback['item']['duration_ms']
 
-                print(f"Playback progress: {progress} / {total_duration}")  # Log song progress
+                print(f"Playback progress: {progress} / {total_duration}")
 
-                # If the song is about to end (within 5 seconds)
-                if progress >= total_duration - 5000 and custom_command:
-                    print("Song is about to end. Playing jingle and executing custom command.")
-                    play_jingle_and_execute_command()
+                # Check if the song is about to end (1 second before)
+                if total_duration - progress <= 1000 and not song_about_to_end_triggered:
+                    print("Song is about to end.")
+                    fetch_and_display_command()
+                    song_about_to_end_triggered = True  # Trigger only once
+
+                if progress <= 1000:  # Reset for the next song
+                    song_about_to_end_triggered = False
             else:
                 print("No active playback detected.")
-            time.sleep(1)  # Check every second
+
+            time.sleep(1)  # Check playback every second
         except Exception as e:
             print(f"Error monitoring playback: {e}")
             time.sleep(1)
 
+# Placeholder function for displaying a message on the radio
+def display_on_radio(message):
+    print(f"Radio Display: {message}")
+
 # Handle key presses
 def on_press(key):
     try:
-        if key.char == '-':  # Next channel
+        if key.char == '-':
             zap_next_channel()
-        elif key.char == '=':  # Play/Pause
+        elif key.char == '=':
             play_pause()
     except AttributeError:
         pass
 
 if __name__ == "__main__":
-    # Load playlaists at the start
     load_playlists()
 
-    # Start monitoring the Spotify playback for song end
     print("Starting playback monitor in the background...")
     from threading import Thread
     monitor_thread = Thread(target=monitor_playback, daemon=True)
     monitor_thread.start()
 
-    # Listen for key presses using pynput
     print("Press '-' to zap channels and '=' to play/pause.")
     with keyboard.Listener(on_press=on_press) as listener:
         listener.join()
