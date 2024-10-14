@@ -144,6 +144,14 @@ def zap_next_channel():
     print(f"Zapping to channel {current_channel}")
     play_channel(current_channel)
 
+# Clear the command from the JSON file after displaying it
+def clear_command():
+    global COMMAND_FILE
+    if os.path.exists(COMMAND_FILE):
+        with open(COMMAND_FILE, 'w') as file:
+            json.dump({}, file)  # Clear the content
+        print("Command cleared from the JSON file.")
+
 # Play the jingle, then execute the custom command, and finally resume the playlist
 def play_jingle_and_execute_command():
     global custom_command
@@ -173,10 +181,8 @@ def play_jingle_and_execute_command():
                 # Execute the custom command after the jingle
                 subprocess.run(command, shell=True)
 
-                # Clear the command from the JSON file after executing
-                with open(COMMAND_FILE, 'w') as file:
-                    json.dump({}, file)
-                print("Cleared command after execution.")
+                # Clear the command from the JSON file after execution
+                clear_command()
 
                 # Resume Spotify playback after the command
                 print("Resuming Spotify playback.")
@@ -201,6 +207,9 @@ def fetch_and_display_command():
 
         # Display the command on the radio
         display_on_radio(f"Command: {command}")
+
+        # Clear the command after showing it
+        clear_command()
 
 # Monitor Spotify playback and fetch/display the command 1 second before the song ends
 def monitor_playback():
