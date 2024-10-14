@@ -20,10 +20,20 @@
             height: auto;
             border-radius: 8px;
         }
+        .command-container {
+            margin-top: 20px;
+        }
+        #notification {
+            padding: 10px;
+            background-color: lightgreen;
+            display: none;
+        }
     </style>
 </head>
 <body>
     <h1>Select Playlists for the Radio</h1>
+    <div id="notification"></div>
+
     <form id="playlistForm">
         <div class="playlist-container">
             {% for playlist in playlists %}
@@ -39,9 +49,28 @@
         </div>
         <button type="button" onclick="submitPlaylists()">Submit Playlists</button>
     </form>
-    <p id="status"></p>
+
+    <!-- Custom command section -->
+    <div class="command-container">
+        <h2>Set Custom Command</h2>
+        <form id="commandForm">
+            <label for="command">Enter Command to Execute after Song Ends:</label><br>
+            <input type="text" id="command" name="command" value="{{ custom_command }}" placeholder="Enter command here"><br>
+            <button type="button" onclick="submitCommand()">Set Command</button>
+        </form>
+    </div>
 
     <script>
+        function showNotification(message) {
+            const notification = document.getElementById('notification');
+            notification.innerText = message;
+            notification.style.display = 'block';
+
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 3000);
+        }
+
         function submitPlaylists() {
             const selectedPlaylists = [];
             document.querySelectorAll('input[type="checkbox"]:checked').forEach(function (checkbox) {
@@ -58,13 +87,36 @@
             .then(response => response.json())
             .then(data => {
                 if (data.message) {
-                    document.getElementById('status').innerText = "Playlists updated successfully!";
+                    showNotification("Playlists updated successfully!");
                 } else {
-                    document.getElementById('status').innerText = "Error: " + data.error;
+                    showNotification("Error: " + data.error);
                 }
             })
             .catch(error => {
-                document.getElementById('status').innerText = "Error: " + error;
+                showNotification("Error: " + error);
+            });
+        }
+
+        function submitCommand() {
+            const command = document.getElementById('command').value;
+
+            fetch('/set_command', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: new URLSearchParams({ command: command })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.message) {
+                    showNotification("Command set successfully!");
+                } else {
+                    showNotification("Error setting command.");
+                }
+            })
+            .catch(error => {
+                showNotification("Error: " + error);
             });
         }
     </script>

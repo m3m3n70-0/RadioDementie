@@ -5,9 +5,14 @@ from pynput import keyboard  # Use pynput for cross-platform keyboard controls
 import json  # For loading playlists from playlists.json
 from dotenv import load_dotenv
 import time  # For retry delays
+import subprocess  # For running custom commands
+import pygame  # For playing the jingle
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Initialize pygame mixer for playing the jingle
+pygame.mixer.init()
 
 # Spotify credentials
 SPOTIPY_CLIENT_ID = os.getenv('SPOTIPY_CLIENT_ID')
@@ -21,9 +26,13 @@ sp_oauth = SpotifyOAuth(client_id=SPOTIPY_CLIENT_ID, client_secret=SPOTIPY_CLIEN
 # Path to the JSON file where playlists are stored
 PLAYLIST_FILE = 'playlists.json'
 
+# Path to the jingle file
+JINGLE_FILE = os.path.join('songs', 'Jingle.mp3')
+
 # Global variables
 radio_channels = []  # List of Spotify playlist URIs
 current_channel = 0  # Current channel index
+custom_command = None  # Store the custom command
 
 # Load playlists from the JSON file dynamically
 def load_playlists():
@@ -120,19 +129,84 @@ def zap_next_channel():
     print(f"Zapping to channel {current_channel}")
     play_channel(current_channel)
 
+# Play the jingle, then execute the custom command, and finally resume the playlist
+def play_jingle_and_execute_command():
+    global custom_command
+    if custom_command:
+        try:
+            # Stop current Spotify playback before playing the jingle
+            print("Pausing Spotify playback for jingle.")
+            sp.pause_playback()
+
+            # Play the jingle
+            if os.path.exists(JINGLE_FILE):
+                print(f"Playing jingle: {JINGLE_FILE}")
+                pygame.mixer.music.load(JINGLE_FILE)
+                pygame.mixer.music.play()
+
+                # Wait for the jingle to finish
+                while pygame.mixer.music.get_busy():
+                    time.sleep(1)
+                print("Jingle finished.")
+
+                # Execute the custom command after the jingle
+                print(f"Executing custom command: {custom_command}")
+                subprocess.run(custom_command, shell=True)
+
+                # Resume Spotify playback after the command
+                print("Resuming Spotify playback.")
+                play_channel(current_channel)  # Resume the current channel
+            else:
+                print(f"Jingle file not found: {JINGLE_FILE}")
+        except Exception as e:
+            print(f"Error during jingle/command execution: {e}")
+        finally:
+            custom_command = None  # Clear the command after execution
+
+# Monitor Spotify playback and execute the command when the song ends
+def monitor_playback():
+    global sp
+    while True:
+        try:
+            playback = sp.current_playback()
+            if playback is not None and playback['is_playing']:
+                progress = playback['progress_ms']
+                total_duration = playback['item']['duration_ms']
+
+                print(f"Playback progress: {progress} / {total_duration}")  # Log song progress
+
+                # If the song is about to end (within 5 seconds)
+                if progress >= total_duration - 5000 and custom_command:
+                    print("Song is about to end. Playing jingle and executing custom command.")
+                    play_jingle_and_execute_command()
+            else:
+                print("No active playback detected.")
+            time.sleep(1)  # Check every second
+        except Exception as e:
+            print(f"Error monitoring playback: {e}")
+            time.sleep(1)
+
 # Handle key presses
 def on_press(key):
     try:
-        if key.char == 'n':  # Next channel
+        if key.char == '-':  # Next channel
             zap_next_channel()
-        elif key.char == 'm':  # Play/Pause
+        elif key.char == '=':  # Play/Pause
             play_pause()
     except AttributeError:
         pass
 
 if __name__ == "__main__":
-    print("Press 'n' to zap channels and 'm' to play/pause.")
-    
+    # Load playlaists at the start
+    load_playlists()
+
+    # Start monitoring the Spotify playback for song end
+    print("Starting playback monitor in the background...")
+    from threading import Thread
+    monitor_thread = Thread(target=monitor_playback, daemon=True)
+    monitor_thread.start()
+
     # Listen for key presses using pynput
+    print("Press '-' to zap channels and '=' to play/pause.")
     with keyboard.Listener(on_press=on_press) as listener:
         listener.join()
